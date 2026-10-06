@@ -1,0 +1,83 @@
+# Alerting rules for the monitoring lab.
+# Group 1 (linux-host): host-level signals a Linux admin L1 watches every shift.
+# Group 2 (demo-app): application-level signals for the sample service.
+groups:
+  - name: linux-host
+    interval: 15s
+    rules:
+      - alert: InstanceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Instance {{ $labels.instance }} (job {{ $labels.job }}) is down"
+          description: "Prometheus has not received metrics from {{ $labels.instance }} for over a minute."
+          runbook: "RUNBOOK.md#instancedown"
+
+      - alert: HighCpuLoad
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU load above 80% on {{ $labels.instance }} (current: {{ $value | printf \"%.1f\" }}%)"
+          description: "Sustained high CPU for 5 minutes. Check for runaway processes."
+          runbook: "RUNBOOK.md#highcpuload"
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Memory usage above 90% on {{ $labels.instance }} (current: {{ $value | printf \"%.1f\" }}%)"
+          description: "Available memory critically low for 5 minutes. Check for leaks / OOM kills."
+          runbook: "RUNBOOK.md#highmemoryusage"
+
+      - alert: DiskSpaceLow
+        expr: (1 - (node_filesystem_avail_bytes{mountpoint="/host"} / node_filesystem_size_bytes{mountpoint="/host"})) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk usage above 85% on {{ $labels.instance }} (current: {{ $value | printf \"%.1f\" }}%)"
+          description: "Root filesystem filling up. Find large files / rotate logs before it hits 100%."
+          runbook: "RUNBOOK.md#diskspacelow"
+
+      - alert: SyntheticDiskPressure
+        expr: drill_disk_pressure_percent > 85
+        for: 1m
+        labels:
+          severity: warning
+          drill: "true"
+        annotations:
+          summary: "Synthetic drill signal: reported disk pressure {{ $value }}%"
+          description: "Raised by drills/drill-2-disk-pressure.sh via the node_exporter textfile collector."
+          runbook: "RUNBOOK.md#syntheticdiskpressure"
+
+  - name: demo-app
+    interval: 15s
+    rules:
+      - alert: DemoAppDown
+        expr: up{job="demo-app"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "demo-app is not responding to Prometheus scrapes"
+          description: "The sample application stopped exposing /metrics. Service is likely down."
+          runbook: "RUNBOOK.md#demoappdown"
+
+      - alert: DemoAppHighErrorRate
+        expr: |
+          sum by(instance) (rate(demo_app_http_errors_total[5m]))
+          /
+          sum by(instance) (rate(demo_app_http_requests_total[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "demo-app error rate above 5% (current: {{ $value | printf \"%.1f\" }}%)"
+          description: "Elevated 5xx responses for 2 minutes. Check application logs."
+          runbook: "RUNBOOK.md#demoapphigherrorrate"
